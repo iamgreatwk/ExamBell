@@ -27,17 +27,7 @@ final class AlarmManager: ObservableObject {
         }
 
         // 请求通知权限
-        let notifyGranted: Bool = {
-            let settings = await notificationCenter.notificationSettings()
-            switch settings.authorizationStatus {
-            case .authorized, .provisional, .ephemeral:
-                return true
-            case .notDetermined:
-                return ((try? await notificationCenter.requestAuthorization(options: [.alert, .sound, .badge])) ?? false)
-            default:
-                return false
-            }
-        }()
+        let notifyGranted = await checkNotificationAccess()
 
         if !calendarGranted && !notifyGranted {
             return .failure("需要日历或通知权限。请在 设置 中开启。")
@@ -225,6 +215,18 @@ final class AlarmManager: ObservableObject {
             ?? eventStore.sources.first
         guard let _ = cal.source else { return nil }
         return (try? eventStore.saveCalendar(cal, commit: true)) != nil ? cal : nil
+    }
+
+    private func checkNotificationAccess() async -> Bool {
+        let settings = await notificationCenter.notificationSettings()
+        switch settings.authorizationStatus {
+        case .authorized, .provisional, .ephemeral:
+            return true
+        case .notDetermined:
+            return ((try? await notificationCenter.requestAuthorization(options: [.alert, .sound, .badge])) ?? false)
+        default:
+            return false
+        }
     }
 
     private func makeIdentifier(_ bell: BellTime, type: String) -> String {

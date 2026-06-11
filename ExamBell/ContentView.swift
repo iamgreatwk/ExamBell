@@ -357,8 +357,6 @@ struct ContentView: View {
         // 按上下午偏移调整实际打铃时间
         let adjusted = bellTimes.filter { selectedBells.contains($0.id) }.map { bell in
             let offset = bell.session == "上午" ? morningOffset : afternoonOffset
-            var b = bell
-            // We need to modify the date, but BellTime.date is let. We'll handle in AlarmManager.
             return (bell, offset)
         }
         Task {

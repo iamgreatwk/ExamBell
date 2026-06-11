@@ -27,6 +27,7 @@ targets:
     info:
       path: ExamBell/Info.plist
       properties:
+        NSCalendarsUsageDescription: "需要日历权限来创建打铃事件作为保底提醒"
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: ["UIInterfaceOrientationPortrait"]
         UIApplicationSceneManifest:

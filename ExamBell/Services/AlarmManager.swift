@@ -1,45 +1,49 @@
 import Foundation
+import EventKit
+import UIKit
 import UserNotifications
 
-/// 通过本地推送通知实现打铃提醒
-/// 使用 .timeSensitive 中断级别，穿透专注模式，音量与系统通知相同
+/// 双通道打铃提醒：日历事件（保底）+ 强提醒通知（timeSensitive）
 @MainActor
 final class AlarmManager: ObservableObject {
 
-    private let center = UNUserNotificationCenter.current()
+    private let eventStore = EKEventStore()
+    private let notificationCenter = UNUserNotificationCenter.current()
+    private let calendarTitle = "考试打铃"
     private let identifierPrefix = "exambell-"
 
-    @Published var authorizationStatus: UNAuthorizationStatus = .notDetermined
     @Published var lastResult: AlarmOperationResult?
 
-    /// 检查/请求通知权限
-    func requestAccess() async -> Bool {
-        let settings = await center.notificationSettings()
-        authorizationStatus = settings.authorizationStatus
+    // MARK: - Create (Dual Channel)
 
-        switch settings.authorizationStatus {
-        case .authorized, .provisional, .ephemeral:
-            return true
-        case .notDetermined:
-            do {
-                let granted = try await center.requestAuthorization(options: [.alert, .sound, .badge])
-                authorizationStatus = granted ? .authorized : .denied
-                return granted
-            } catch {
-                authorizationStatus = .denied
+    /// 双通道创建：日历事件 + timeSensitive 通知
+    func createAlarms(for bells: [BellTime], advanceMinutes: Int = 5) async -> AlarmOperationResult {
+        // 请求日历权限
+        var calendarGranted = false
+        do {
+            calendarGranted = try await requestCalendarAccess()
+        } catch {
+            calendarGranted = false
+        }
+
+        // 请求通知权限
+        let notifyGranted: Bool = {
+            let settings = await notificationCenter.notificationSettings()
+            switch settings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral:
+                return true
+            case .notDetermined:
+                return ((try? await notificationCenter.requestAuthorization(options: [.alert, .sound, .badge])) ?? false)
+            default:
                 return false
             }
-        default:
-            return false
-        }
-    }
+        }()
 
-    /// 为选中的打铃时间创建通知
-    func createAlarms(for bells: [BellTime], advanceMinutes: Int = 5) async -> AlarmOperationResult {
-        guard await requestAccess() else {
-            return .failure("未获得通知权限。请在 设置 → 通知 → 考试打铃 中开启。")
+        if !calendarGranted && !notifyGranted {
+            return .failure("需要日历或通知权限。请在 设置 中开启。")
         }
 
+        let calendar = calendarGranted ? getOrCreateCalendar() : nil
         var created = 0
         var errors: [String] = []
 
@@ -50,61 +54,85 @@ final class AlarmManager: ObservableObject {
                 continue
             }
 
-            // 通知内容
-            let content = UNMutableNotificationContent()
-            content.title = bell.label
-            content.body = "\(bell.session) \(bell.timeString) — 考试打铃"
-            content.sound = .default
-            content.badge = 1
+            var bellOK = false
 
-            // timeSensitive: 可穿透专注模式/睡眠模式 (iOS 15+)
-            if #available(iOS 15.0, *) {
-                content.interruptionLevel = .timeSensitive
-            }
+            // ── 通道1: 日历事件（保底 + 日历可见） ──
+            if let cal = calendar {
+                let event = EKEvent(eventStore: eventStore)
+                event.title = bell.label
+                event.calendar = cal
+                event.startDate = bell.date
+                event.endDate = bell.date.addingTimeInterval(60)
+                event.notes = bell.summary
+                event.isAllDay = false
 
-            // 正点通知
-            let triggerInterval = bell.date.timeIntervalSinceNow
-            let mainTrigger = UNTimeIntervalNotificationTrigger(timeInterval: max(triggerInterval, 1), repeats: false)
-            let mainRequest = UNNotificationRequest(
-                identifier: makeIdentifier(bell, type: "main"),
-                content: content,
-                trigger: mainTrigger
-            )
+                // 日历正点提醒
+                event.addAlarm(EKAlarm(absoluteDate: bell.date))
 
-            do {
-                try await center.add(mainRequest)
-                created += 1
-            } catch {
-                errors.append("创建失败 \(bell.timeString): \(error.localizedDescription)")
-                continue
-            }
-
-            // 提前提醒
-            if advanceMinutes > 0 {
-                let earlyDate = bell.date.addingTimeInterval(TimeInterval(-advanceMinutes * 60))
-                guard earlyDate > now else { continue }
-
-                let earlyContent = UNMutableNotificationContent()
-                earlyContent.title = "⚠️ 即将打铃"
-                earlyContent.body = "\(bell.label) — \(advanceMinutes)分钟后 (\(bell.timeString))"
-                earlyContent.sound = .default
-                if #available(iOS 15.0, *) {
-                    earlyContent.interruptionLevel = .timeSensitive
+                // 日历提前提醒
+                if advanceMinutes > 0 {
+                    let earlyDate = bell.date.addingTimeInterval(TimeInterval(-advanceMinutes * 60))
+                    if earlyDate > now {
+                        event.addAlarm(EKAlarm(absoluteDate: earlyDate))
+                    }
                 }
 
-                let earlyInterval = earlyDate.timeIntervalSinceNow
-                let earlyTrigger = UNTimeIntervalNotificationTrigger(timeInterval: max(earlyInterval, 1), repeats: false)
-                let earlyRequest = UNNotificationRequest(
-                    identifier: makeIdentifier(bell, type: "early"),
-                    content: earlyContent,
-                    trigger: earlyTrigger
+                if let _ = try? eventStore.save(event, span: .thisEvent) {
+                    bellOK = true
+                }
+            }
+
+            // ── 通道2: timeSensitive 强提醒通知 ──
+            if notifyGranted {
+                // 正点通知
+                let content = UNMutableNotificationContent()
+                content.title = "🔔 \(bell.label)"
+                content.body = "\(bell.session) \(bell.timeString) — 考试打铃"
+                content.sound = .default
+                if #available(iOS 15.0, *) {
+                    content.interruptionLevel = .timeSensitive
+                }
+
+                let mainInterval = bell.date.timeIntervalSinceNow
+                let mainTrigger = UNTimeIntervalNotificationTrigger(timeInterval: max(mainInterval, 1), repeats: false)
+                let mainRequest = UNNotificationRequest(
+                    identifier: makeIdentifier(bell, type: "main"),
+                    content: content,
+                    trigger: mainTrigger
                 )
 
-                do {
-                    try await center.add(earlyRequest)
-                } catch {
-                    errors.append("提前提醒失败 \(bell.timeString): \(error.localizedDescription)")
+                if let _ = try? await notificationCenter.add(mainRequest) {
+                    bellOK = true
                 }
+
+                // 提前提醒通知
+                if advanceMinutes > 0 {
+                    let earlyDate = bell.date.addingTimeInterval(TimeInterval(-advanceMinutes * 60))
+                    guard earlyDate > now else { continue }
+
+                    let earlyContent = UNMutableNotificationContent()
+                    earlyContent.title = "⚠️ 即将打铃"
+                    earlyContent.body = "\(bell.label) — \(advanceMinutes)分钟后 (\(bell.timeString))"
+                    earlyContent.sound = .default
+                    if #available(iOS 15.0, *) {
+                        earlyContent.interruptionLevel = .timeSensitive
+                    }
+
+                    let earlyInterval = earlyDate.timeIntervalSinceNow
+                    let earlyTrigger = UNTimeIntervalNotificationTrigger(timeInterval: max(earlyInterval, 1), repeats: false)
+                    let earlyRequest = UNNotificationRequest(
+                        identifier: makeIdentifier(bell, type: "early"),
+                        content: earlyContent,
+                        trigger: earlyTrigger
+                    )
+                    try? await notificationCenter.add(earlyRequest)
+                }
+            }
+
+            if bellOK {
+                created += 1
+            } else {
+                errors.append("创建失败 \(bell.timeString)")
             }
         }
 
@@ -119,56 +147,99 @@ final class AlarmManager: ObservableObject {
         return result
     }
 
-    /// 取消所有打铃通知
-    func deleteAllAlarms(for date: Date) async -> AlarmOperationResult {
-        let pending = await center.pendingNotificationRequests()
-        let targetIds = pending
-            .map(\.identifier)
-            .filter { $0.hasPrefix(identifierPrefix) }
+    // MARK: - Delete
 
-        if targetIds.isEmpty {
+    func deleteAllAlarms(for date: Date) async -> AlarmOperationResult {
+        var deleted = 0
+        var errors: [String] = []
+
+        // 删除日历事件
+        if let calendar = getOrCreateCalendar() {
+            let startOfDay = Calendar.current.startOfDay(for: date)
+            let endOfDay = Calendar.current.date(byAdding: .day, value: 1, to: startOfDay)!
+            let predicate = eventStore.predicateForEvents(withStart: startOfDay, end: endOfDay, calendars: [calendar])
+            let events = eventStore.events(matching: predicate)
+            for event in events {
+                do {
+                    try eventStore.remove(event, span: .thisEvent)
+                    deleted += 1
+                } catch {
+                    errors.append("日历删除失败: \(error.localizedDescription)")
+                }
+            }
+        }
+
+        // 删除通知
+        let pending = await notificationCenter.pendingNotificationRequests()
+        let notifyIds = pending.map(\.identifier).filter { $0.hasPrefix(identifierPrefix) }
+        if !notifyIds.isEmpty {
+            notificationCenter.removePendingNotificationRequests(withIdentifiers: notifyIds)
+            deleted += notifyIds.count
+        }
+
+        if deleted == 0 && errors.isEmpty {
             return .failure("该日期没有已设置的打铃提醒。")
         }
 
-        center.removePendingNotificationRequests(withIdentifiers: targetIds)
-        let result: AlarmOperationResult = .success(created: 0, deleted: targetIds.count)
+        let result: AlarmOperationResult = errors.isEmpty
+            ? .success(created: 0, deleted: deleted)
+            : .partial(created: 0, deleted: deleted, errors: errors)
         lastResult = result
         return result
     }
 
-    /// 获取待发送的打铃通知列表
-    func getAlarms(for date: Date) async -> [PendingAlarm] {
-        let pending = await center.pendingNotificationRequests()
-        let targetIds = pending
-            .map(\.identifier)
-            .filter { $0.hasPrefix(identifierPrefix) }
+    // MARK: - Query
 
-        // 从通知中心取详细信息
+    func getAlarms(for date: Date) async -> [PendingAlarm] {
+        let pending = await notificationCenter.pendingNotificationRequests()
         return pending
-            .filter { targetIds.contains($0.identifier) }
+            .filter { $0.identifier.hasPrefix(identifierPrefix) }
             .compactMap { request in
                 guard let trigger = request.trigger as? UNTimeIntervalNotificationTrigger,
-                      let fireDate = Calendar.current.date(
-                        byAdding: .second,
-                        value: Int(trigger.timeInterval),
-                        to: Date()
-                      ) else { return nil }
-                return PendingAlarm(
-                    identifier: request.identifier,
-                    title: request.content.title,
-                    body: request.content.body,
-                    fireDate: fireDate
-                )
+                      let fireDate = Calendar.current.date(byAdding: .second, value: Int(trigger.timeInterval), to: Date())
+                else { return nil }
+                return PendingAlarm(identifier: request.identifier, title: request.content.title, body: request.content.body, fireDate: fireDate)
             }
             .sorted { $0.fireDate < $1.fireDate }
     }
 
-    /// 取消单条通知
     func deleteAlarm(identifier: String) {
-        center.removePendingNotificationRequests(withIdentifiers: [identifier])
+        notificationCenter.removePendingNotificationRequests(withIdentifiers: [identifier])
     }
 
     // MARK: - Private
+
+    private func requestCalendarAccess() async throws -> Bool {
+        let status = EKEventStore.authorizationStatus(for: .event)
+        switch status {
+        case .authorized:
+            return true
+        case .notDetermined:
+            if #available(iOS 17.0, *) {
+                return try await eventStore.requestFullAccessToEvents()
+            } else {
+                return await withCheckedContinuation { c in
+                    eventStore.requestAccess(to: .event) { granted, _ in c.resume(returning: granted) }
+                }
+            }
+        default:
+            return false
+        }
+    }
+
+    private func getOrCreateCalendar() -> EKCalendar? {
+        if let existing = eventStore.calendars(for: .event).first(where: { $0.title == calendarTitle }) {
+            return existing
+        }
+        let cal = EKCalendar(for: .event, eventStore: eventStore)
+        cal.title = calendarTitle
+        cal.cgColor = UIColor.systemOrange.cgColor
+        cal.source = eventStore.sources.first(where: { $0.sourceType == .local })
+            ?? eventStore.sources.first(where: { $0.sourceType == .calDAV })
+            ?? eventStore.sources.first
+        guard let _ = cal.source else { return nil }
+        return (try? eventStore.saveCalendar(cal, commit: true)) != nil ? cal : nil
+    }
 
     private func makeIdentifier(_ bell: BellTime, type: String) -> String {
         let df = DateFormatter()
@@ -177,7 +248,7 @@ final class AlarmManager: ObservableObject {
     }
 }
 
-/// 待发送的提醒（替代 EKEvent）
+/// 待发送的提醒
 struct PendingAlarm: Identifiable {
     let id = UUID()
     let identifier: String

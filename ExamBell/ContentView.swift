@@ -22,6 +22,8 @@ struct ContentView: View {
     @State private var isLoading = false
     @State private var showExistingAlarms = false
     @State private var advanceMinutes = 10  // 提前提醒分钟数
+    @State private var morningOffset = 0    // 上午整体偏移（分钟）
+    @State private var afternoonOffset = 0  // 下午整体偏移（分钟）
     @State private var existingAlarms: [PendingAlarm] = []
 
     var body: some View {
@@ -31,6 +33,8 @@ struct ContentView: View {
                     pasteArea
                     datePickerRow
                     advanceRow
+                    morningOffsetRow
+                    afternoonOffsetRow
                     actionButtons
                     if !bellTimes.isEmpty {
                         schedulePreview
@@ -126,7 +130,31 @@ struct ContentView: View {
         }
     }
 
-    /// 操作按钮
+    /// 上午偏移
+    private var morningOffsetRow: some View {
+        HStack {
+            Text("上午偏移").font(.headline)
+            Spacer()
+            Stepper("\(formattedOffset(morningOffset))", value: $morningOffset, in: -120...180, step: 5)
+                .labelsHidden()
+            Text(formattedOffset(morningOffset))
+                .font(.subheadline.monospacedDigit())
+                .foregroundColor(morningOffset == 0 ? .secondary : (morningOffset > 0 ? .orange : .green))
+        }
+    }
+
+    /// 下午偏移
+    private var afternoonOffsetRow: some View {
+        HStack {
+            Text("下午偏移").font(.headline)
+            Spacer()
+            Stepper("\(formattedOffset(afternoonOffset))", value: $afternoonOffset, in: -120...180, step: 5)
+                .labelsHidden()
+            Text(formattedOffset(afternoonOffset))
+                .font(.subheadline.monospacedDigit())
+                .foregroundColor(afternoonOffset == 0 ? .secondary : (afternoonOffset > 0 ? .orange : .green))
+        }
+    }
     private var actionButtons: some View {
         HStack(spacing: 16) {
             Button(action: setAlarms) {
@@ -252,6 +280,11 @@ struct ContentView: View {
         selectedBells.count
     }
 
+    private func formattedOffset(_ m: Int) -> String {
+        if m == 0 { return "不变" }
+        return (m > 0 ? "+" : "") + "\(m)分"
+    }
+
     // MARK: - Actions
 
     private func parseSchedule() {
@@ -321,13 +354,23 @@ struct ContentView: View {
 
     private func setAlarms() {
         isLoading = true
-        let selected = bellTimes.filter { selectedBells.contains($0.id) }
+        // 按上下午偏移调整实际打铃时间
+        let adjusted = bellTimes.filter { selectedBells.contains($0.id) }.map { bell in
+            let offset = bell.session == "上午" ? morningOffset : afternoonOffset
+            var b = bell
+            // We need to modify the date, but BellTime.date is let. We'll handle in AlarmManager.
+            return (bell, offset)
+        }
         Task {
-            let result = await alarmManager.createAlarms(for: selected, advanceMinutes: advanceMinutes)
+            let result = await alarmManager.createAlarms(
+                for: adjusted.map(\.0),
+                advanceMinutes: advanceMinutes,
+                offsets: Dictionary(uniqueKeysWithValues: adjusted.map { ($0.0.id, $0.1) })
+            )
             isLoading = false
             switch result {
             case .success(let created, _):
-                showAlert("成功", "已创建 \(created) 个打铃闹钟")
+                showAlert("成功", "已创建 \(created) 个提醒")
             case .failure(let msg):
                 showAlert("失败", msg)
             case .partial(let created, _, let errors):

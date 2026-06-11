@@ -17,7 +17,7 @@ final class AlarmManager: ObservableObject {
     // MARK: - Create (Dual Channel)
 
     /// 双通道创建：日历事件 + timeSensitive 通知
-    func createAlarms(for bells: [BellTime], advanceMinutes: Int = 5) async -> AlarmOperationResult {
+    func createAlarms(for bells: [BellTime], advanceMinutes: Int = 5, offsets: [UUID: Int] = [:]) async -> AlarmOperationResult {
         // 请求日历权限
         var calendarGranted = false
         do {
@@ -49,21 +49,30 @@ final class AlarmManager: ObservableObject {
 
         for bell in bells {
             let now = Date()
-            guard bell.date > now else {
+
+            // 应用上下午偏移
+            let offsetMinutes = offsets[bell.id] ?? 0
+            let shiftedBell = bell.date.addingTimeInterval(TimeInterval(offsetMinutes * 60))
+
+            guard shiftedBell > now else {
                 errors.append("跳过已过期: \(bell.timeString)")
                 continue
             }
 
-            // 实际提醒时间 = 打铃时间 - 提前量
-            let alertDate = bell.date.addingTimeInterval(TimeInterval(-advanceMinutes * 60))
+            // 实际提醒时间 = (打铃时间 + 偏移) - 提前量
+            let alertDate = shiftedBell.addingTimeInterval(TimeInterval(-advanceMinutes * 60))
             guard alertDate > now else {
                 errors.append("跳过已过期: \(bell.timeString)")
                 continue
             }
 
-            // 通知内容使用实际打铃时间描述
+            // 通知内容使用调整后的打铃时间
+            let df2 = DateFormatter()
+            df2.dateFormat = "HH:mm"
+            let shiftedTimeStr = df2.string(from: shiftedBell)
+            let offsetSuffix = offsetMinutes != 0 ? "（已偏移\(offsetMinutes > 0 ? "+" : "")\(offsetMinutes)分）" : ""
             let advanceSuffix = advanceMinutes > 0 ? "（\(advanceMinutes)分钟后打铃）" : ""
-            let alertLabel = "🔔 \(bell.label)"
+            let alertLabel = "🔔 \(bell.label)\(offsetSuffix)"
 
             var bellOK = false
 
@@ -74,7 +83,7 @@ final class AlarmManager: ObservableObject {
                 event.calendar = cal
                 event.startDate = alertDate
                 event.endDate = alertDate.addingTimeInterval(60)
-                event.notes = "\(bell.summary) — 按提前\(advanceMinutes)分钟提醒"
+                event.notes = "\(bell.summary) — 偏移\(offsetSuffix) 提前\(advanceMinutes)分提醒"
                 event.isAllDay = false
                 event.addAlarm(EKAlarm(absoluteDate: alertDate))
 
@@ -87,7 +96,7 @@ final class AlarmManager: ObservableObject {
             if notifyGranted {
                 let content = UNMutableNotificationContent()
                 content.title = alertLabel
-                content.body = "\(bell.session) \(bell.timeString)\(advanceSuffix) — 考试打铃"
+                content.body = "\(bell.session) \(shiftedTimeStr)\(advanceSuffix)\(offsetSuffix) — 考试打铃"
                 content.sound = .default
                 if #available(iOS 15.0, *) {
                     content.interruptionLevel = .timeSensitive

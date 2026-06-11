@@ -13,14 +13,19 @@ on:
 jobs:
   build:
     name: Build Unsigned IPA
-    runs-on: macos-14  # Apple Silicon, Xcode 15+
+    runs-on: macos-latest  # latest Apple Silicon runner
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Select Xcode
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+        run: |
+          ls /Applications/Xcode*.app
+          sudo xcode-select -s /Applications/Xcode_16.app 2>/dev/null || \
+          sudo xcode-select -s /Applications/Xcode_16.2.app 2>/dev/null || \
+          sudo xcode-select -s /Applications/Xcode_16.1.app 2>/dev/null || \
+          sudo xcode-select -s /Applications/Xcode_16.0.app
 
       - name: Install XcodeGen
         run: brew install xcodegen

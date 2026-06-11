@@ -256,8 +256,6 @@ struct ContentView: View {
                 comps.month = examComponents.month
                 comps.day = examComponents.day
                 if let newDate = calendar.date(from: comps) {
-                    var updatedBell = bell
-                    // We need to create a new BellTime with updated date
                     allBells.append(BellTime(
                         date: newDate,
                         timeString: bell.timeString,

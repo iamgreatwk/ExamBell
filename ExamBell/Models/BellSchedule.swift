@@ -1,7 +1,7 @@
 import Foundation
 
 /// 单次打铃记录
-struct BellTime: Identifiable, Codable, Equatable {
+struct BellTime: Identifiable, Equatable {
     let id = UUID()
     /// 打铃的完整日期时间
     let date: Date
@@ -20,7 +20,7 @@ struct BellTime: Identifiable, Codable, Equatable {
 }
 
 /// 一天的打铃计划
-struct BellDay: Identifiable, Codable {
+struct BellDay: Identifiable {
     let id = UUID()
     /// 日期字符串 (如 "6月13日")
     let dateString: String

@@ -1,5 +1,6 @@
 import Foundation
 import EventKit
+import UIKit
 
 /// 通过 EventKit 管理考试打铃闹钟
 /// 使用系统日历创建带提醒的事件实现"闹钟"效果

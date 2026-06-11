@@ -27,8 +27,6 @@ targets:
     info:
       path: ExamBell/Info.plist
       properties:
-        NSCalendarsUsageDescription: "需要访问日历以设置考试打铃提醒"
-        NSRemindersUsageDescription: "需要访问提醒以设置考试打铃提醒"
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: ["UIInterfaceOrientationPortrait"]
         UIApplicationSceneManifest:

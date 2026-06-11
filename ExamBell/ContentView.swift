@@ -1,5 +1,4 @@
 import SwiftUI
-import EventKit
 
 // MARK: - ContentView
 
@@ -23,7 +22,7 @@ struct ContentView: View {
     @State private var isLoading = false
     @State private var showExistingAlarms = false
     @State private var advanceMinutes = 10  // 提前提醒分钟数
-    @State private var existingAlarms: [EKEvent] = []
+    @State private var existingAlarms: [PendingAlarm] = []
 
     var body: some View {
         NavigationStack {
@@ -223,11 +222,11 @@ struct ContentView: View {
                     }
                     .frame(maxWidth: .infinity, minHeight: 200)
                 } else {
-                    ForEach(existingAlarms, id: \.eventIdentifier) { event in
+                    ForEach(existingAlarms) { alarm in
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(event.startDate, style: .time)
+                            Text(alarm.fireDate, style: .time)
                                 .font(.headline.monospaced())
-                            Text(event.title)
+                            Text(alarm.title)
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
@@ -354,14 +353,18 @@ struct ContentView: View {
     }
 
     private func loadExistingAlarms() {
-        let alarms = alarmManager.getAlarms(for: examDate)
-        existingAlarms = alarms
-        showExistingAlarms = true
+        Task {
+            let alarms = await alarmManager.getAlarms(for: examDate)
+            existingAlarms = alarms
+            showExistingAlarms = true
+        }
     }
 
     private func deleteSpecificAlarms(at offsets: IndexSet) {
-        // Note: EKEvent removal via eventStore needs to be done properly
-        // For now this is a read-only view
+        for idx in offsets {
+            alarmManager.deleteAlarm(identifier: existingAlarms[idx].identifier)
+        }
+        existingAlarms.remove(atOffsets: offsets)
     }
 
     private func showAlert(_ title: String, _ message: String) {

@@ -22,6 +22,7 @@ struct ContentView: View {
     @State private var alertMessage = ""
     @State private var isLoading = false
     @State private var showExistingAlarms = false
+    @State private var advanceMinutes = 10  // 提前提醒分钟数
     @State private var existingAlarms: [EKEvent] = []
 
     var body: some View {
@@ -30,6 +31,7 @@ struct ContentView: View {
                 VStack(spacing: 20) {
                     pasteArea
                     datePickerRow
+                    advanceRow
                     actionButtons
                     if !bellTimes.isEmpty {
                         schedulePreview
@@ -109,6 +111,19 @@ struct ContentView: View {
             DatePicker("", selection: $examDate, displayedComponents: .date)
                 .labelsHidden()
                 .onChange(of: examDate) { _ in parseSchedule() }
+        }
+    }
+
+    /// 提前提醒
+    private var advanceRow: some View {
+        HStack {
+            Text("提前提醒").font(.headline)
+            Spacer()
+            Stepper("\(advanceMinutes) 分钟", value: $advanceMinutes, in: 0...60, step: 5)
+                .labelsHidden()
+            Text("\(advanceMinutes) 分钟")
+                .font(.subheadline.monospacedDigit())
+                .foregroundColor(advanceMinutes == 0 ? .secondary : .blue)
         }
     }
 
@@ -309,7 +324,7 @@ struct ContentView: View {
         isLoading = true
         let selected = bellTimes.filter { selectedBells.contains($0.id) }
         Task {
-            let result = await alarmManager.createAlarms(for: selected)
+            let result = await alarmManager.createAlarms(for: selected, advanceMinutes: advanceMinutes)
             isLoading = false
             switch result {
             case .success(let created, _):

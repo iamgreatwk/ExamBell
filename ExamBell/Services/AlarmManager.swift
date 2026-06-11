@@ -45,7 +45,7 @@ final class AlarmManager: ObservableObject {
     }
 
     /// 为选中的打铃时间创建日历事件
-    func createAlarms(for bells: [BellTime], dateOverrides: [UUID: Date] = [:]) async -> AlarmOperationResult {
+    func createAlarms(for bells: [BellTime], advanceMinutes: Int = 5, dateOverrides: [UUID: Date] = [:]) async -> AlarmOperationResult {
         guard await requestAccess() else {
             return .failure("未获得日历访问权限。请在 设置 → 隐私 → 日历 中开启权限。")
         }
@@ -72,9 +72,11 @@ final class AlarmManager: ObservableObject {
             let alarm = EKAlarm(absoluteDate: bellDate)
             event.addAlarm(alarm)
 
-            // 第二个提醒：提前5分钟
-            let earlyAlarm = EKAlarm(absoluteDate: bellDate.addingTimeInterval(-300))
-            event.addAlarm(earlyAlarm)
+            // 提前提醒（用户可配置，默认5分钟，设为0则不提前）
+            if advanceMinutes > 0 {
+                let earlyAlarm = EKAlarm(absoluteDate: bellDate.addingTimeInterval(TimeInterval(-advanceMinutes * 60)))
+                event.addAlarm(earlyAlarm)
+            }
 
             do {
                 try eventStore.save(event, span: .thisEvent)

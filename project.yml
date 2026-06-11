@@ -1,0 +1,35 @@
+name: ExamBell
+options:
+  bundleIdPrefix: com.exambell
+  deploymentTarget:
+    iOS: "16.0"
+  xcodeVersion: "15.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+
+targets:
+  ExamBell:
+    type: application
+    platform: iOS
+    sources:
+      - path: ExamBell
+    settings:
+      base:
+        INFOPLIST_FILE: ExamBell/Info.plist
+        PRODUCT_BUNDLE_IDENTIFIER: com.exambell.app
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: ""
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: NO
+        DEVELOPMENT_TEAM: ""
+        PROVISIONING_PROFILE_SPECIFIER: ""
+    info:
+      path: ExamBell/Info.plist
+      properties:
+        NSCalendarsUsageDescription: "需要访问日历以设置考试打铃提醒"
+        NSRemindersUsageDescription: "需要访问提醒以设置考试打铃提醒"
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: ["UIInterfaceOrientationPortrait"]
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false

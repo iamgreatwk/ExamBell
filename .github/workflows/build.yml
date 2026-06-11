@@ -1,0 +1,75 @@
+name: Build iOS App
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bundle_id:
+        description: "Bundle Identifier"
+        required: false
+        default: "com.exambell.app"
+
+jobs:
+  build:
+    name: Build Unsigned IPA
+    runs-on: macos-14  # Apple Silicon, Xcode 15+
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode Project
+        run: |
+          xcodegen generate
+          echo "Project generated"
+
+      - name: Resolve Package Dependencies
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project ExamBell.xcodeproj \
+            -scheme ExamBell
+
+      - name: Archive
+        run: |
+          xcodebuild archive \
+            -project ExamBell.xcodeproj \
+            -scheme ExamBell \
+            -sdk iphoneos \
+            -configuration Release \
+            -archivePath build/ExamBell.xcarchive \
+            -destination "generic/platform=iOS" \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            SWIFT_ACTIVE_COMPILATION_CONDITIONS=""
+
+      - name: Create IPA
+        run: |
+          mkdir -p Payload
+          cp -R build/ExamBell.xcarchive/Products/Applications/ExamBell.app Payload/
+          zip -r ExamBell.ipa Payload
+          rm -rf Payload
+          echo "IPA created: $(ls -lh ExamBell.ipa | awk '{print $5}')"
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ExamBell-unsigned
+          path: ExamBell.ipa
+          retention-days: 30
+
+      - name: Upload Xcode Archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: ExamBell-xcarchive
+          path: build/ExamBell.xcarchive
+          retention-days: 7

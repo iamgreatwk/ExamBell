@@ -54,28 +54,29 @@ final class AlarmManager: ObservableObject {
                 continue
             }
 
+            // 实际提醒时间 = 打铃时间 - 提前量
+            let alertDate = bell.date.addingTimeInterval(TimeInterval(-advanceMinutes * 60))
+            guard alertDate > now else {
+                errors.append("跳过已过期: \(bell.timeString)")
+                continue
+            }
+
+            // 通知内容使用实际打铃时间描述
+            let advanceSuffix = advanceMinutes > 0 ? "（\(advanceMinutes)分钟后打铃）" : ""
+            let alertLabel = "🔔 \(bell.label)"
+
             var bellOK = false
 
             // ── 通道1: 日历事件（保底 + 日历可见） ──
             if let cal = calendar {
                 let event = EKEvent(eventStore: eventStore)
-                event.title = bell.label
+                event.title = alertLabel
                 event.calendar = cal
-                event.startDate = bell.date
-                event.endDate = bell.date.addingTimeInterval(60)
-                event.notes = bell.summary
+                event.startDate = alertDate
+                event.endDate = alertDate.addingTimeInterval(60)
+                event.notes = "\(bell.summary) — 按提前\(advanceMinutes)分钟提醒"
                 event.isAllDay = false
-
-                // 日历正点提醒
-                event.addAlarm(EKAlarm(absoluteDate: bell.date))
-
-                // 日历提前提醒
-                if advanceMinutes > 0 {
-                    let earlyDate = bell.date.addingTimeInterval(TimeInterval(-advanceMinutes * 60))
-                    if earlyDate > now {
-                        event.addAlarm(EKAlarm(absoluteDate: earlyDate))
-                    }
-                }
+                event.addAlarm(EKAlarm(absoluteDate: alertDate))
 
                 if let _ = try? eventStore.save(event, span: .thisEvent) {
                     bellOK = true
@@ -84,48 +85,24 @@ final class AlarmManager: ObservableObject {
 
             // ── 通道2: timeSensitive 强提醒通知 ──
             if notifyGranted {
-                // 正点通知
                 let content = UNMutableNotificationContent()
-                content.title = "🔔 \(bell.label)"
-                content.body = "\(bell.session) \(bell.timeString) — 考试打铃"
+                content.title = alertLabel
+                content.body = "\(bell.session) \(bell.timeString)\(advanceSuffix) — 考试打铃"
                 content.sound = .default
                 if #available(iOS 15.0, *) {
                     content.interruptionLevel = .timeSensitive
                 }
 
-                let mainInterval = bell.date.timeIntervalSinceNow
-                let mainTrigger = UNTimeIntervalNotificationTrigger(timeInterval: max(mainInterval, 1), repeats: false)
-                let mainRequest = UNNotificationRequest(
-                    identifier: makeIdentifier(bell, type: "main"),
+                let interval = alertDate.timeIntervalSinceNow
+                let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(interval, 1), repeats: false)
+                let request = UNNotificationRequest(
+                    identifier: makeIdentifier(bell, type: "alert"),
                     content: content,
-                    trigger: mainTrigger
+                    trigger: trigger
                 )
 
-                if let _ = try? await notificationCenter.add(mainRequest) {
+                if let _ = try? await notificationCenter.add(request) {
                     bellOK = true
-                }
-
-                // 提前提醒通知
-                if advanceMinutes > 0 {
-                    let earlyDate = bell.date.addingTimeInterval(TimeInterval(-advanceMinutes * 60))
-                    guard earlyDate > now else { continue }
-
-                    let earlyContent = UNMutableNotificationContent()
-                    earlyContent.title = "⚠️ 即将打铃"
-                    earlyContent.body = "\(bell.label) — \(advanceMinutes)分钟后 (\(bell.timeString))"
-                    earlyContent.sound = .default
-                    if #available(iOS 15.0, *) {
-                        earlyContent.interruptionLevel = .timeSensitive
-                    }
-
-                    let earlyInterval = earlyDate.timeIntervalSinceNow
-                    let earlyTrigger = UNTimeIntervalNotificationTrigger(timeInterval: max(earlyInterval, 1), repeats: false)
-                    let earlyRequest = UNNotificationRequest(
-                        identifier: makeIdentifier(bell, type: "early"),
-                        content: earlyContent,
-                        trigger: earlyTrigger
-                    )
-                    try? await notificationCenter.add(earlyRequest)
                 }
             }
 
